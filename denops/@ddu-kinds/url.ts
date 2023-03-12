@@ -62,6 +62,28 @@ export class Kind extends BaseKind<Params> {
       );
       return ActionFlags.Persist;
     },
+
+    async get(args) {
+      // if responseFile == null or "", g:ddu_kind_url_responce = {cookie: file, header: header, body: body}
+      const params = args.actionParams as { cookieDir?: string, responseFile?: string, var?: unknown };
+
+      for (const item of args.items) {
+        const response = await fetch((item?.action as ActionData).url);
+        if (!response.ok) {
+          console.error(
+            "response error: " + (item?.action as ActionData).url + ": " +
+              response.statusText,
+          );
+          return ActionFlags.None;
+        }
+
+        if (params.responseFile == null || params.responseFile == ""){ // g:ddu_kind_url_responce
+          await fn.add(args.denops, params.var, {header: response.headers, body: response.body})
+        } else {
+        }
+      }
+      return ActionFlags.None;
+    },
   };
 
   override params(): Params {
