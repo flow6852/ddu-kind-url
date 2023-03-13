@@ -1,16 +1,29 @@
 import * as fn from "https://deno.land/x/denops_std@v4.0.0/function/mod.ts";
-import type { Actions } from "https://deno.land/x/ddu_vim@v2.3.0/types.ts";
+import type {
+  Actions,
+  Item,
+} from "https://deno.land/x/ddu_vim@v2.3.0/types.ts";
 import {
   ActionFlags,
   BaseKind,
 } from "https://deno.land/x/ddu_vim@v2.3.0/types.ts";
+import { TextLineStream } from "https://deno.land/std@0.178.0/streams/text_line_stream.ts";
 
 export interface ActionData {
-  url: string;
+  url?: string;
 }
 type Params = {
   externalOpener: "openbrowser" | "external";
 };
+interface FetchParams {
+  showHeader?: boolean;
+  body?: string;
+  method?: string;
+}
+
+function getUrl(item: Item): string {
+  return (item?.action as ActionData | undefined)?.url ?? item.word;
+}
 
 export class Kind extends BaseKind<Params> {
   override actions: Actions<Params> = {
@@ -18,14 +31,12 @@ export class Kind extends BaseKind<Params> {
       switch (args.kindParams.externalOpener) {
         case "openbrowser":
           for (const item of args.items) {
-            const action = item?.action as ActionData;
-            await args.denops.call("openbrowser#open", action.url);
+            await args.denops.call("openbrowser#open", getUrl(item));
           }
           break;
         case "external":
           for (const item of args.items) {
-            const action = item?.action as ActionData;
-            await args.denops.call("external#browser", action.url);
+            await args.denops.call("external#browser", getUrl(item));
           }
           break;
         default:
@@ -41,10 +52,9 @@ export class Kind extends BaseKind<Params> {
     async open(args) {
       const params = args.actionParams as { command?: string };
       for (const item of args.items) {
-        const action = item?.action as ActionData;
         await args.denops.cmd("silent execute command fnameescape(path)", {
           command: params.command ?? ":edit",
-          path: action.url,
+          path: getUrl(item),
         });
       }
       return ActionFlags.None;
@@ -52,9 +62,7 @@ export class Kind extends BaseKind<Params> {
 
     async yank(args) {
       const { register } = args.actionParams as { register?: string };
-      const content = args.items
-        .map((item) => (item?.action as ActionData).url)
-        .join("\n");
+      const content = args.items.map(getUrl).join("\n");
       await fn.setreg(
         args.denops,
         register ?? await args.denops.eval("v:register"),
@@ -63,26 +71,37 @@ export class Kind extends BaseKind<Params> {
       return ActionFlags.Persist;
     },
 
-    async get(args) {
-      // if responseFile == null or "", g:ddu_kind_url_responce = {cookie: file, header: header, body: body}
-      const params = args.actionParams as { cookieDir?: string, responseFile?: boolean, var?: string };
-
+    async fetchUnstable(args) {
+      const params = args.actionParams as FetchParams;
       for (const item of args.items) {
-        const response = await fetch((item?.action as ActionData).url);
-        if (!response.ok) {
-          console.error(
-            "response error: " + (item?.action as ActionData).url + ": " +
-              response.statusText,
-          );
-          return ActionFlags.None;
+        const response = await fetch(getUrl(item), {
+          body: params.body,
+          method: params.method ?? "GET",
+        });
+
+        const header: string[] = [];
+        if (params.showHeader) {
+          header.push(`HTTP/1.1 ${response.status} ${response.statusText}`);
+          for await (const [key, value] of response.headers.entries()) {
+            header.push(`${key}: ${value}`);
+          }
+          header.push("");
         }
 
-        if (params.responseFile == null || params.responseFile == false){ // g:ddu_kind_url_responce
-          // 
-          // await fn.add(args.denops, params.var, {header: response.headers, body: await response.text()})
-        } else {
-          await Deno.writeTextFile(, await response.text())
+        const body: string[] = [];
+        const bodyRaw = response.body;
+        if (bodyRaw !== null) {
+          const stream = bodyRaw
+            .pipeThrough(new TextDecoderStream())
+            .pipeThrough(new TextLineStream());
+          for await (const line of stream) {
+            body.push(line);
+          }
         }
+
+        const content = header.concat(body);
+        await args.denops.cmd("new +setlocal\\ buftype=nofile");
+        await args.denops.call("setline", 1, content);
       }
       return ActionFlags.None;
     },
