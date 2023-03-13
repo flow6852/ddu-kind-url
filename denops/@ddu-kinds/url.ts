@@ -65,7 +65,7 @@ export class Kind extends BaseKind<Params> {
 
     async get(args) {
       // if responseFile == null or "", g:ddu_kind_url_responce = {cookie: file, header: header, body: body}
-      const params = args.actionParams as { cookieDir?: string, responseFile?: string, var?: unknown };
+      const params = args.actionParams as { cookieDir?: string, responseFile?: boolean, var?: string };
 
       for (const item of args.items) {
         const response = await fetch((item?.action as ActionData).url);
@@ -77,9 +77,11 @@ export class Kind extends BaseKind<Params> {
           return ActionFlags.None;
         }
 
-        if (params.responseFile == null || params.responseFile == ""){ // g:ddu_kind_url_responce
-          await fn.add(args.denops, params.var, {header: response.headers, body: response.body})
+        if (params.responseFile == null || params.responseFile == false){ // g:ddu_kind_url_responce
+          // 
+          // await fn.add(args.denops, params.var, {header: response.headers, body: await response.text()})
         } else {
+          await Deno.writeTextFile(, await response.text())
         }
       }
       return ActionFlags.None;
