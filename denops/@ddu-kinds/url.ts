@@ -9,10 +9,10 @@ import {
 } from "https://deno.land/x/ddu_vim@v3.4.3/types.ts";
 import { TextLineStream } from "https://deno.land/std@0.195.0/streams/text_line_stream.ts";
 
-export interface ActionData {
+export type ActionData = {
   url?: string;
-}
-type Params = {
+};
+export type Params = {
   externalOpener: "openbrowser" | "external";
 };
 interface FetchParams {
