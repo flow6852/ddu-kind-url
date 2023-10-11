@@ -2,12 +2,12 @@ import * as fn from "https://deno.land/x/denops_std@v5.0.1/function/mod.ts";
 import type {
   Actions,
   Item,
-} from "https://deno.land/x/ddu_vim@v3.4.3/types.ts";
+} from "https://deno.land/x/ddu_vim@v3.6.0/types.ts";
 import {
   ActionFlags,
   BaseKind,
-} from "https://deno.land/x/ddu_vim@v3.4.3/types.ts";
-import { TextLineStream } from "https://deno.land/std@0.195.0/streams/text_line_stream.ts";
+} from "https://deno.land/x/ddu_vim@v3.6.0/types.ts";
+import { TextLineStream } from "https://deno.land/std@0.203.0/streams/text_line_stream.ts";
 
 export type ActionData = {
   url?: string;
