@@ -7,109 +7,142 @@ import {
   ActionFlags,
   BaseKind,
 } from "https://deno.land/x/ddu_vim@v3.6.0/types.ts";
-import { TextLineStream } from "https://deno.land/std@0.203.0/streams/text_line_stream.ts";
+import { deepMerge } from "https://deno.land/std@0.201.0/collections/deep_merge.ts";
+import { TextLineStream } from "https://deno.land/std@0.201.0/streams/text_line_stream.ts";
+import { systemopen } from "https://deno.land/x/systemopen@v0.2.0/mod.ts";
 
 export type ActionData = {
   url?: string;
 };
 export type Params = {
-  externalOpener: "openbrowser" | "external";
+  externalOpener: "openbrowser" | "external" | "systemopen" | "uiopen";
 };
-interface FetchParams {
-  showHeader?: boolean;
-  body?: string;
-  method?: string;
-}
+export type FetchParams = {
+  body: string | null;
+  headers: Record<string, string>;
+  method: string;
+  showHeader: boolean;
+  showStatus: boolean;
+};
 
 function getUrl(item: Item): string {
   return (item?.action as ActionData | undefined)?.url ?? item.word;
 }
 
-export class Kind extends BaseKind<Params> {
-  override actions: Actions<Params> = {
-    async browse(args) {
-      switch (args.kindParams.externalOpener) {
-        case "openbrowser":
-          for (const item of args.items) {
-            await args.denops.call("openbrowser#open", getUrl(item));
-          }
-          break;
-        case "external":
-          for (const item of args.items) {
-            await args.denops.call("external#browser", getUrl(item));
-          }
-          break;
-        default:
-          await args.denops.call(
-            "ddu#util#print_error",
-            `Invalid externalOpener: ${args.kindParams.externalOpener}`,
-            "ddu-kind-url",
-          );
-      }
-      return ActionFlags.None;
-    },
+function capitalize(str: string): string {
+  return str.replace(
+    /\w+/g,
+    (match) => match[0].toUpperCase() + match.slice(1).toLowerCase(),
+  );
+}
 
-    async open(args) {
-      const params = args.actionParams as { command?: string };
-      for (const item of args.items) {
-        await args.denops.cmd("silent execute command fnameescape(path)", {
-          command: params.command ?? ":edit",
-          path: getUrl(item),
-        });
-      }
-      return ActionFlags.None;
-    },
+export const UrlActions = {
+  async browse(args) {
+    switch (args.kindParams.externalOpener) {
+      case "openbrowser":
+        for (const item of args.items) {
+          await args.denops.call("openbrowser#open", getUrl(item));
+        }
+        break;
+      case "external":
+        for (const item of args.items) {
+          await args.denops.call("external#browser", getUrl(item));
+        }
+        break;
+      case "systemopen":
+        for (const item of args.items) {
+          await systemopen(getUrl(item));
+        }
+        break;
+      case "uiopen":
+        for (const item of args.items) {
+          await args.denops.call("luaeval", "vim.ui.open(_A)", getUrl(item));
+        }
+        break;
+      default:
+        await args.denops.call(
+          "ddu#util#print_error",
+          `Invalid externalOpener: ${args.kindParams.externalOpener}`,
+          "ddu-kind-url",
+        );
+    }
+    return ActionFlags.None;
+  },
 
-    async yank(args) {
-      const { register } = args.actionParams as { register?: string };
-      const content = args.items.map(getUrl).join("\n");
-      await fn.setreg(
-        args.denops,
-        register ?? await args.denops.eval("v:register"),
-        content,
+  async open(args) {
+    const params = args.actionParams as { command?: string };
+    for (const item of args.items) {
+      await args.denops.cmd("silent execute command fnameescape(path)", {
+        command: params.command ?? ":edit",
+        path: getUrl(item),
+      });
+    }
+    return ActionFlags.None;
+  },
+
+  async yank(args) {
+    const { register } = args.actionParams as { register?: string };
+    await fn.setreg(
+      args.denops,
+      register ?? await args.denops.eval("v:register"),
+      args.items.map(getUrl),
+    );
+    return ActionFlags.Persist;
+  },
+
+  async fetch(args) {
+    const params = deepMerge<FetchParams>(
+      args.actionParams as Partial<FetchParams>,
+      {
+        body: null,
+        headers: {},
+        method: "GET",
+        showHeader: true,
+        showStatus: true,
+      },
+    );
+    for (const item of args.items) {
+      const response = await fetch(getUrl(item), {
+        body: params.body,
+        headers: params.headers,
+        method: params.method,
+      });
+      const content: string[] = [];
+
+      if (params.showStatus) {
+        content.push(`${response.status} ${response.statusText}`);
+        content.push("");
+      }
+      if (params.showHeader) {
+        for await (const [key, value] of response.headers.entries()) {
+          content.push(`${capitalize(key)}: ${value}`);
+        }
+        content.push("");
+      }
+      if (response.body) {
+        const stream = response.body
+          .pipeThrough(new TextDecoderStream())
+          .pipeThrough(new TextLineStream());
+        for await (const line of stream) {
+          content.push(line);
+        }
+      }
+
+      await args.denops.cmd(
+        "new +setlocal\\ buftype=nofile ddu-kind-url-fetch",
       );
-      return ActionFlags.Persist;
-    },
+      await args.denops.call("setline", 1, content);
+    }
+    return ActionFlags.None;
+  },
+} as const satisfies Actions<Params>;
 
-    async fetchUnstable(args) {
-      const params = args.actionParams as FetchParams;
-      for (const item of args.items) {
-        const response = await fetch(getUrl(item), {
-          body: params.body,
-          method: params.method ?? "GET",
-        });
-
-        const header: string[] = [];
-        if (params.showHeader) {
-          header.push(`HTTP/1.1 ${response.status} ${response.statusText}`);
-          for await (const [key, value] of response.headers.entries()) {
-            header.push(`${key}: ${value}`);
-          }
-          header.push("");
-        }
-
-        const body: string[] = [];
-        const bodyRaw = response.body;
-        if (bodyRaw !== null) {
-          const stream = bodyRaw
-            .pipeThrough(new TextDecoderStream())
-            .pipeThrough(new TextLineStream());
-          for await (const line of stream) {
-            body.push(line);
-          }
-        }
-
-        const content = header.concat(body);
-        await args.denops.cmd("new +setlocal\\ buftype=nofile");
-        await args.denops.call("setline", 1, content);
-      }
-      return ActionFlags.None;
-    },
-  };
+export class Kind extends BaseKind<Params> {
+  override actions: Actions<Params> = UrlActions;
 
   override params(): Params {
     return {
-      externalOpener: "openbrowser",
+      externalOpener: "systemopen",
     };
   }
 }
